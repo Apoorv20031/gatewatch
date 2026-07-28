@@ -1,0 +1,1134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GATEWATCH — Free ANPR System</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/4.1.1/tesseract.min.js"></script>
+<style>
+:root {
+  --bg: #0a0e17;
+  --panel: #111820;
+  --panel-2: #1a2330;
+  --line: #2a3a4a;
+  --text: #e8edf5;
+  --muted: #7a8a9e;
+  --amber: #f0b84d;
+  --cyan: #4fd1c5;
+  --green: #4ecb71;
+  --red: #f56565;
+  --blue: #63b3ed;
+  --shadow: 0 8px 32px rgba(0,0,0,0.6);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  min-height: 100vh;
+}
+.sidebar {
+  width: 240px;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  padding: 24px 0;
+  height: 100vh;
+  position: fixed;
+  top: 0;
+  left: 0;
+  overflow-y: auto;
+}
+.brand {
+  padding: 0 20px 24px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 16px;
+}
+.brand h1 { font-size: 24px; font-weight: 800; letter-spacing: -0.5px; }
+.brand span { color: var(--cyan); }
+.brand small { display: block; font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+.nav-item {
+  display: block;
+  width: 100%;
+  padding: 12px 20px;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  transition: 0.2s;
+  font-weight: 500;
+}
+.nav-item:hover { background: var(--panel-2); color: var(--text); }
+.nav-item.active { 
+  background: var(--panel-2); 
+  color: var(--amber); 
+  border-left: 3px solid var(--amber);
+}
+
+.main {
+  margin-left: 240px;
+  padding: 30px 40px;
+  min-height: 100vh;
+}
+.page { display: none; }
+.page.active { display: block; }
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.page-title { font-size: 28px; font-weight: 700; }
+.page-desc { color: var(--muted); font-size: 14px; margin-top: 4px; }
+
+.scan-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+@media (max-width: 1000px) { .scan-grid { grid-template-columns: 1fr; } }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: var(--shadow);
+}
+.panel-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.panel-title .badge {
+  font-size: 10px;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-weight: 700;
+}
+.badge-free { background: var(--green); color: #000; }
+
+.scanner-container {
+  position: relative;
+  background: #000;
+  border-radius: 12px;
+  overflow: hidden;
+  aspect-ratio: 16/10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--line);
+}
+.scanner-container video,
+.scanner-container canvas,
+.scanner-container img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.scanner-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.scan-frame {
+  position: absolute;
+  inset: 15%;
+  border: 2px dashed rgba(240, 184, 77, 0.5);
+  border-radius: 8px;
+}
+.scan-frame .corner {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  border-color: var(--amber);
+  border-style: solid;
+  border-width: 0;
+}
+.scan-frame .tl { top: -2px; left: -2px; border-top-width: 3px; border-left-width: 3px; }
+.scan-frame .tr { top: -2px; right: -2px; border-top-width: 3px; border-right-width: 3px; }
+.scan-frame .bl { bottom: -2px; left: -2px; border-bottom-width: 3px; border-left-width: 3px; }
+.scan-frame .br { bottom: -2px; right: -2px; border-bottom-width: 3px; border-right-width: 3px; }
+
+.scan-line {
+  position: absolute;
+  left: 10%;
+  right: 10%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--amber), transparent);
+  box-shadow: 0 0 20px var(--amber);
+  animation: scanMove 2.5s ease-in-out infinite;
+}
+@keyframes scanMove {
+  0% { top: 10%; opacity: 0; }
+  20% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { top: 90%; opacity: 0; }
+}
+
+.btn-group {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+.btn {
+  padding: 10px 20px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: 0.2s;
+  font-family: inherit;
+}
+.btn:hover { border-color: var(--amber); transform: translateY(-1px); }
+.btn.primary {
+  background: var(--amber);
+  color: #000;
+  border-color: var(--amber);
+}
+.btn.primary:hover { filter: brightness(1.1); }
+.btn.danger { border-color: var(--red); color: var(--red); }
+.btn.danger:hover { background: var(--red); color: #fff; }
+.btn.success { border-color: var(--green); color: var(--green); }
+.btn.success:hover { background: var(--green); color: #000; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+.status-bar {
+  margin-top: 12px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: var(--panel-2);
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.status-bar .icon { font-size: 18px; }
+.status-bar.success { border-left: 3px solid var(--green); }
+.status-bar.error { border-left: 3px solid var(--red); }
+.status-bar.info { border-left: 3px solid var(--blue); }
+.status-bar.warning { border-left: 3px solid var(--amber); }
+.status-bar.processing { border-left: 3px solid var(--cyan); animation: pulse-border 1s infinite; }
+@keyframes pulse-border {
+  0%, 100% { border-left-color: var(--cyan); }
+  50% { border-left-color: transparent; }
+}
+
+.result-plate {
+  font-family: 'Courier New', monospace;
+  font-size: 36px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  text-align: center;
+  padding: 16px;
+  background: var(--panel-2);
+  border-radius: 8px;
+  margin: 12px 0;
+  border: 2px solid var(--line);
+}
+.result-plate.found { border-color: var(--green); color: var(--green); }
+.result-plate.not-found { border-color: var(--amber); color: var(--amber); }
+
+.info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 16px 0;
+}
+.info-field label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.info-field input, .info-field select {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+}
+.info-field.full { grid-column: 1/-1; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--panel);
+  border-radius: 12px;
+  overflow: hidden;
+}
+thead th {
+  padding: 12px 16px;
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+tbody td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+tbody tr:hover { background: var(--panel-2); }
+.plate-cell { font-family: 'Courier New', monospace; font-weight: 700; letter-spacing: 1px; }
+
+.badge-category {
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--line);
+}
+.badge-category.resident { color: var(--cyan); border-color: var(--cyan); }
+.badge-category.visitor { color: var(--amber); border-color: var(--amber); }
+.badge-category.delivery { color: #9f7aea; border-color: #9f7aea; }
+.badge-category.cab { color: #f687b3; border-color: #f687b3; }
+.badge-category.worker { color: var(--green); border-color: var(--green); }
+
+.thumb {
+  width: 50px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: var(--panel-2);
+}
+
+.registry-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 16px;
+}
+.registry-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+}
+.registry-card .plate {
+  font-family: 'Courier New', monospace;
+  font-size: 18px;
+  font-weight: 700;
+}
+.registry-card .owner { font-size: 14px; margin: 4px 0; }
+.registry-card .meta { font-size: 12px; color: var(--muted); display: flex; gap: 8px; flex-wrap: wrap; }
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.stat-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 18px;
+}
+.stat-card .num {
+  font-size: 32px;
+  font-weight: 700;
+}
+.stat-card .label {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.stat-card .num.green { color: var(--green); }
+.stat-card .num.amber { color: var(--amber); }
+.stat-card .num.cyan { color: var(--cyan); }
+.stat-card .num.red { color: var(--red); }
+
+.mini-btn {
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+}
+.mini-btn:hover { border-color: var(--red); color: var(--red); }
+
+.confidence-bar {
+  height: 4px;
+  background: var(--panel-2);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+.confidence-bar .fill {
+  height: 100%;
+  background: var(--green);
+  transition: width 0.5s;
+}
+.confidence-bar .fill.medium { background: var(--amber); }
+.confidence-bar .fill.low { background: var(--red); }
+
+.scan-mode-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.scan-mode-tabs .btn {
+  flex: 1;
+  text-align: center;
+  padding: 8px;
+  font-size: 12px;
+}
+.scan-mode-tabs .btn.active {
+  border-color: var(--cyan);
+  color: var(--cyan);
+  background: var(--panel-2);
+}
+
+.toolbar {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.toolbar input {
+  flex: 1;
+  padding: 10px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 13px;
+  min-width: 200px;
+}
+.filter-pill {
+  padding: 8px 16px;
+  border-radius: 20px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+}
+.filter-pill.active {
+  border-color: var(--cyan);
+  color: var(--cyan);
+}
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+  <div class="brand">
+    <h1>GATE<span>WATCH</span></h1>
+    <small>Free ANPR System</small>
+  </div>
+  <button class="nav-item active" data-page="scan">📷 Scan Entry</button>
+  <button class="nav-item" data-page="log">📋 Entry Log</button>
+  <button class="nav-item" data-page="registry">📚 Vehicle Registry</button>
+  <button class="nav-item" data-page="dashboard">📊 Dashboard</button>
+</div>
+
+<div class="main">
+
+  <!-- SCAN PAGE -->
+  <div class="page active" id="page-scan">
+    <div class="page-header">
+      <div>
+        <div class="page-title">📷 Scan Vehicle</div>
+        <div class="page-desc">100% FREE — No API key needed, unlimited scans</div>
+      </div>
+      <div style="display:flex; gap:12px; align-items:center;">
+        <span style="font-size:12px; color:var(--green);">✅ FREE & UNLIMITED</span>
+      </div>
+    </div>
+
+    <div class="scan-grid">
+      <div class="panel">
+        <div class="panel-title">
+          📸 Scanner
+          <span class="badge badge-free">FREE</span>
+        </div>
+
+        <div class="scan-mode-tabs">
+          <button class="btn active" data-mode="camera">📹 Camera</button>
+          <button class="btn" data-mode="upload">🖼️ Upload</button>
+        </div>
+
+        <div class="scanner-container" id="scannerContainer">
+          <video id="video" autoplay playsinline style="display:none;"></video>
+          <canvas id="canvas" style="display:none;"></canvas>
+          <img id="uploadPreview" style="display:none;" alt="Preview">
+          <div id="placeholder" style="color:var(--muted); text-align:center; padding:20px;">
+            <div style="font-size:48px; margin-bottom:12px;">📷</div>
+            <div>Camera not started</div>
+            <div style="font-size:13px; margin-top:8px;">Click "Start Camera" or upload an image</div>
+          </div>
+          <div class="scanner-overlay">
+            <div class="scan-frame" id="scanFrame">
+              <div class="corner tl"></div>
+              <div class="corner tr"></div>
+              <div class="corner bl"></div>
+              <div class="corner br"></div>
+            </div>
+            <div class="scan-line" id="scanLine"></div>
+          </div>
+        </div>
+
+        <div class="btn-group">
+          <button class="btn primary" id="btnStartCam">▶ Start Camera</button>
+          <button class="btn" id="btnCapture" disabled>📸 Capture & Scan</button>
+          <button class="btn danger" id="btnStopCam" disabled>⏹ Stop</button>
+          <button class="btn" id="btnUpload">📁 Upload Image</button>
+        </div>
+
+        <div class="status-bar" id="statusBar">
+          <span class="icon">⏳</span>
+          <span>Ready to scan</span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">
+          📝 Entry Details
+          <span class="badge" id="scanStatusBadge" style="background:var(--muted); color:var(--bg);">WAITING</span>
+        </div>
+
+        <div id="resultArea">
+          <div style="text-align:center; padding:40px 20px; color:var(--muted);">
+            <div style="font-size:48px; margin-bottom:12px;">🔍</div>
+            <div>No plate detected yet</div>
+            <div style="font-size:13px; margin-top:8px;">Scan a plate or enter manually below</div>
+          </div>
+        </div>
+
+        <div id="resultBody" style="display:none;">
+          <div class="result-plate" id="plateDisplay">—— —— —— ——</div>
+          <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:12px;">
+            <span id="matchStatus">🔍 Checking registry...</span>
+            <span id="confidenceDisplay">Confidence: 0%</span>
+          </div>
+          <div class="confidence-bar">
+            <div class="fill" id="confidenceBar" style="width:0%;"></div>
+          </div>
+
+          <div class="info-grid">
+            <div class="info-field"><label>Plate Number</label><input id="fPlate" type="text" placeholder="MH12AB1234"></div>
+            <div class="info-field"><label>Vehicle Type</label>
+              <select id="fType">
+                <option>4-Wheeler</option>
+                <option>2-Wheeler</option>
+                <option>3-Wheeler</option>
+                <option>Heavy Vehicle</option>
+              </select>
+            </div>
+            <div class="info-field"><label>Category</label>
+              <select id="fCategory">
+                <option value="resident">Resident</option>
+                <option value="visitor">Visitor</option>
+                <option value="delivery">Delivery</option>
+                <option value="cab">Cab</option>
+                <option value="worker">Worker</option>
+              </select>
+            </div>
+            <div class="info-field"><label>Flat / Unit</label><input id="fFlat" type="text" placeholder="B-402"></div>
+            <div class="info-field full"><label>Name / Purpose</label><input id="fName" type="text" placeholder="Driver name or purpose"></div>
+          </div>
+
+          <div id="thumbRow" style="display:flex; gap:8px; margin-bottom:12px;"></div>
+
+          <div class="btn-group">
+            <button class="btn success" id="btnLogEntry">✅ Log Entry</button>
+            <button class="btn" id="btnClear">🗑️ Clear</button>
+            <button class="btn" id="btnRetryScan">🔄 Retry Scan</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LOG PAGE -->
+  <div class="page" id="page-log">
+    <div class="page-header">
+      <div>
+        <div class="page-title">📋 Entry Log</div>
+        <div class="page-desc">Complete history of all vehicle entries</div>
+      </div>
+    </div>
+    <div class="toolbar">
+      <input id="logSearch" placeholder="Search by plate, name, or flat...">
+      <button class="filter-pill active" data-filter="all">All</button>
+      <button class="filter-pill" data-filter="resident">Resident</button>
+      <button class="filter-pill" data-filter="visitor">Visitor</button>
+      <button class="filter-pill" data-filter="delivery">Delivery</button>
+      <button class="filter-pill" data-filter="cab">Cab</button>
+      <button class="filter-pill" data-filter="worker">Worker</button>
+    </div>
+    <table>
+      <thead><tr><th>Photo</th><th>Plate</th><th>Category</th><th>Flat</th><th>Name/Purpose</th><th>Entry Time</th><th>Status</th><th></th></tr></thead>
+      <tbody id="logBody"></tbody>
+    </table>
+  </div>
+
+  <!-- REGISTRY PAGE -->
+  <div class="page" id="page-registry">
+    <div class="page-header">
+      <div>
+        <div class="page-title">📚 Vehicle Registry</div>
+        <div class="page-desc">Registered vehicles with sticker status</div>
+      </div>
+    </div>
+    <div class="toolbar">
+      <input id="registrySearch" placeholder="Search by plate, owner, or flat...">
+      <button class="btn" id="clearRegistrySearch">✕ Clear</button>
+    </div>
+    <div class="registry-grid" id="registryGrid"></div>
+  </div>
+
+  <!-- DASHBOARD PAGE -->
+  <div class="page" id="page-dashboard">
+    <div class="page-header">
+      <div>
+        <div class="page-title">📊 Dashboard</div>
+        <div class="page-desc">Real-time status of vehicles inside the premises</div>
+      </div>
+    </div>
+    <div class="stats">
+      <div class="stat-card"><div class="num cyan" id="statInside">0</div><div class="label">Currently Inside</div></div>
+      <div class="stat-card"><div class="num" id="statToday">0</div><div class="label">Today's Entries</div></div>
+      <div class="stat-card"><div class="num green" id="statRegistered">0</div><div class="label">Registered Vehicles</div></div>
+      <div class="stat-card"><div class="num red" id="statOverstay">0</div><div class="label">Overstay Alerts</div></div>
+    </div>
+    <table>
+      <thead><tr><th>Photo</th><th>Plate</th><th>Category</th><th>Flat</th><th>Entered</th><th>Duration</th><th></th></tr></thead>
+      <tbody id="insideBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// GATEWATCH - COMPLETELY FREE ANPR SYSTEM
+// No API key needed - Uses Tesseract.js
+// ============================================================
+
+// ===== DATA =====
+const REGISTRY = [
+  { plate: "MH12AB1234", owner: "R. Deshmukh", flat: "A-101", type: "4-Wheeler", sticker: true },
+  { plate: "MH14CD5678", owner: "S. Kulkarni", flat: "B-204", type: "2-Wheeler", sticker: true },
+  { plate: "MH12EF9012", owner: "P. Joshi", flat: "C-305", type: "4-Wheeler", sticker: true },
+  { plate: "MH14GH3456", owner: "A. Naik", flat: "A-402", type: "2-Wheeler", sticker: true },
+  { plate: "MH12IJ7890", owner: "R. Deshmukh (2nd)", flat: "A-101", type: "4-Wheeler", sticker: false },
+  { plate: "KA05MW1234", owner: "S. Reddy", flat: "B-101", type: "4-Wheeler", sticker: true },
+  { plate: "TN22AB5678", owner: "M. Kumar", flat: "C-204", type: "2-Wheeler", sticker: false },
+];
+
+const PLACEHOLDER_IMG = "data:image/svg+xml;utf8," + encodeURIComponent(
+  `<svg xmlns='http://www.w3.org/2000/svg' width='100' height='75'><rect width='100%' height='100%' fill='#1a2330'/><text x='50%' y='55%' font-size='11' fill='#7a8a9e' text-anchor='middle'>photo</text></svg>`
+);
+
+let LOG = [];
+let idCounter = 1;
+let capturedPhoto = null;
+let stream = null;
+let currentScanMode = 'camera';
+
+// ===== SEED DATA =====
+function seedLog() {
+  const now = Date.now();
+  const entries = [
+    { plate: "MH12AB1234", category: "resident", flat: "A-101", name: "R. Deshmukh", type: "4-Wheeler", mins: 5 },
+    { plate: "MH14GH3456", category: "resident", flat: "A-402", name: "A. Naik", type: "2-Wheeler", mins: 42, exited: true },
+    { plate: "DL01ZZ2211", category: "delivery", flat: "B-204", name: "Zomato", type: "2-Wheeler", mins: 12 },
+    { plate: "MH20QQ4433", category: "cab", flat: "C-305", name: "Ola Pickup", type: "4-Wheeler", mins: 55 },
+    { plate: "MH12IJ7890", category: "resident", flat: "A-101", name: "R. Deshmukh (2nd)", type: "4-Wheeler", mins: 120, exited: true },
+    { plate: "KA05MW1234", category: "resident", flat: "B-101", name: "S. Reddy", type: "4-Wheeler", mins: 8 },
+  ];
+  entries.forEach(e => {
+    const entryTime = now - e.mins * 60000;
+    LOG.push({
+      id: idCounter++,
+      plate: e.plate,
+      category: e.category,
+      flat: e.flat,
+      name: e.name,
+      type: e.type,
+      photo: PLACEHOLDER_IMG,
+      entryTime,
+      status: e.exited ? 'exited' : 'inside',
+      exitTime: e.exited ? now - (e.mins - 5) * 60000 : null
+    });
+  });
+}
+seedLog();
+
+// ===== DOM REFS =====
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const uploadPreview = document.getElementById('uploadPreview');
+const placeholder = document.getElementById('placeholder');
+const scanFrame = document.getElementById('scanFrame');
+const scanLine = document.getElementById('scanLine');
+const statusBar = document.getElementById('statusBar');
+const btnStartCam = document.getElementById('btnStartCam');
+const btnCapture = document.getElementById('btnCapture');
+const btnStopCam = document.getElementById('btnStopCam');
+const btnUpload = document.getElementById('btnUpload');
+const resultArea = document.getElementById('resultArea');
+const resultBody = document.getElementById('resultBody');
+const plateDisplay = document.getElementById('plateDisplay');
+const matchStatus = document.getElementById('matchStatus');
+const confidenceDisplay = document.getElementById('confidenceDisplay');
+const confidenceBar = document.getElementById('confidenceBar');
+const fPlate = document.getElementById('fPlate');
+const fType = document.getElementById('fType');
+const fCategory = document.getElementById('fCategory');
+const fFlat = document.getElementById('fFlat');
+const fName = document.getElementById('fName');
+const thumbRow = document.getElementById('thumbRow');
+const scanStatusBadge = document.getElementById('scanStatusBadge');
+
+// ===== UTILITY =====
+function setStatus(msg, type = 'info') {
+  const icons = { info: 'ℹ️', success: '✅', error: '❌', warning: '⚠️', processing: '🔄' };
+  statusBar.innerHTML = `<span class="icon">${icons[type] || 'ℹ️'}</span><span>${msg}</span>`;
+  statusBar.className = `status-bar ${type}`;
+}
+
+function setScanBadge(text, color = 'var(--muted)') {
+  scanStatusBadge.textContent = text;
+  scanStatusBadge.style.background = color;
+  scanStatusBadge.style.color = color === 'var(--muted)' ? 'var(--bg)' : '#000';
+}
+
+function showResult(plate, confidence = 0, photo = null, source = 'OCR') {
+  resultArea.style.display = 'none';
+  resultBody.style.display = 'block';
+  
+  plateDisplay.textContent = plate || '—— —— —— ——';
+  plateDisplay.className = 'result-plate';
+  
+  if (plate) {
+    const match = REGISTRY.find(v => v.plate === plate);
+    if (match) {
+      plateDisplay.className = 'result-plate found';
+      matchStatus.textContent = `✅ Registered: ${match.owner} (${match.flat}) [${source}]`;
+      fCategory.value = 'resident';
+      fFlat.value = match.flat;
+      fName.value = match.owner;
+      fType.value = match.type;
+    } else {
+      plateDisplay.className = 'result-plate not-found';
+      matchStatus.textContent = `⚠️ Not in registry - new entry [${source}]`;
+    }
+    confidenceDisplay.textContent = `Confidence: ${Math.round(confidence)}%`;
+    confidenceBar.style.width = `${Math.min(100, confidence)}%`;
+    confidenceBar.className = 'fill' + (confidence < 40 ? ' low' : confidence < 70 ? ' medium' : '');
+  }
+  
+  if (photo) {
+    capturedPhoto = photo;
+    thumbRow.innerHTML = `<img src="${photo}" style="width:80px; height:60px; object-fit:cover; border-radius:8px; border:1px solid var(--line);">`;
+  }
+  
+  fPlate.value = plate || '';
+  setScanBadge('READY', 'var(--green)');
+}
+
+function hideResult() {
+  resultBody.style.display = 'none';
+  resultArea.style.display = 'block';
+  setScanBadge('WAITING', 'var(--muted)');
+}
+
+// ===== OCR WITH TESSERACT.JS - COMPLETELY FREE =====
+async function performOCR(imageData) {
+  setStatus('🔍 OCR in progress...', 'processing');
+  setScanBadge('SCANNING', 'var(--amber)');
+  btnCapture.disabled = true;
+  scanLine.style.display = 'block';
+  
+  try {
+    // Check if Tesseract is loaded
+    if (typeof Tesseract === 'undefined') {
+      throw new Error('OCR engine not loaded. Please refresh and try again.');
+    }
+    
+    const result = await Tesseract.recognize(
+      imageData,
+      'eng',
+      {
+        logger: m => {
+          if (m.status === 'recognizing text') {
+            const progress = Math.round(m.progress * 100);
+            setStatus(`📝 OCR Progress: ${progress}%`, 'processing');
+          }
+        }
+      }
+    );
+    
+    // Extract potential plate numbers
+    const lines = result.data.lines || [];
+    let plates = [];
+    
+    for (const line of lines) {
+      const text = line.text.toUpperCase().replace(/[^A-Z0-9]/g, '');
+      // Look for Indian plate pattern: 2 letters + 2 digits + optional + 4 digits
+      // Also handle other common patterns
+      if (text.length >= 4 && text.length <= 12) {
+        const hasLetters = /[A-Z]/.test(text);
+        const hasNumbers = /[0-9]/.test(text);
+        if (hasLetters && hasNumbers) {
+          plates.push({
+            text: text,
+            confidence: line.confidence || 0
+          });
+        }
+      }
+    }
+    
+    // Also check full text for any potential plates
+    if (plates.length === 0) {
+      const fullText = result.data.text.toUpperCase().replace(/[^A-Z0-9\n]/g, '');
+      const words = fullText.split('\n').filter(w => w.length >= 4 && w.length <= 12);
+      for (const word of words) {
+        const hasLetters = /[A-Z]/.test(word);
+        const hasNumbers = /[0-9]/.test(word);
+        if (hasLetters && hasNumbers) {
+          plates.push({ text: word, confidence: 30 });
+        }
+      }
+    }
+    
+    plates.sort((a, b) => b.confidence - a.confidence);
+    
+    if (plates.length > 0) {
+      const best = plates[0];
+      showResult(best.text, best.confidence, imageData, 'Tesseract.js');
+      setStatus(`✅ Plate detected: ${best.text} (${Math.round(best.confidence)}% confidence)`, 'success');
+      setScanBadge('DETECTED', 'var(--green)');
+    } else {
+      throw new Error('No license plate pattern detected');
+    }
+  } catch (err) {
+    setStatus(`❌ Scan failed: ${err.message}`, 'error');
+    setScanBadge('FAILED', 'var(--red)');
+    hideResult();
+  }
+  
+  btnCapture.disabled = false;
+  scanLine.style.display = 'block';
+}
+
+// ===== CAMERA FUNCTIONS =====
+btnStartCam.addEventListener('click', async () => {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ 
+      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } 
+    });
+    video.srcObject = stream;
+    video.style.display = 'block';
+    placeholder.style.display = 'none';
+    uploadPreview.style.display = 'none';
+    scanFrame.style.display = 'block';
+    scanLine.style.display = 'block';
+    btnCapture.disabled = false;
+    btnStopCam.disabled = false;
+    btnStartCam.disabled = true;
+    setStatus('📹 Camera active - position the plate in the frame', 'success');
+    setScanBadge('LIVE', 'var(--green)');
+  } catch (err) {
+    setStatus('❌ Camera error: ' + err.message + '. Try uploading an image instead.', 'error');
+  }
+});
+
+btnStopCam.addEventListener('click', stopCamera);
+function stopCamera() {
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  video.style.display = 'none';
+  video.srcObject = null;
+  placeholder.style.display = 'block';
+  scanFrame.style.display = 'none';
+  scanLine.style.display = 'none';
+  btnCapture.disabled = true;
+  btnStopCam.disabled = true;
+  btnStartCam.disabled = false;
+  setStatus('⏹ Camera stopped', 'info');
+  setScanBadge('OFF', 'var(--red)');
+}
+
+// ===== IMAGE UPLOAD =====
+btnUpload.addEventListener('click', () => {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.onchange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const imageData = ev.target.result;
+        uploadPreview.src = imageData;
+        uploadPreview.style.display = 'block';
+        placeholder.style.display = 'none';
+        video.style.display = 'none';
+        scanFrame.style.display = 'block';
+        scanLine.style.display = 'block';
+        if (stream) stopCamera();
+        setStatus('📸 Image loaded - scanning...', 'info');
+        btnCapture.disabled = false;
+        btnStartCam.disabled = true;
+        btnStopCam.disabled = true;
+        setTimeout(() => performOCR(imageData), 500);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+  input.click();
+});
+
+// ===== CAPTURE =====
+btnCapture.addEventListener('click', () => {
+  if (currentScanMode === 'camera' && video.srcObject) {
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const imageData = canvas.toDataURL('image/jpeg', 0.9);
+    performOCR(imageData);
+  } else if (uploadPreview.style.display !== 'none' && uploadPreview.src) {
+    performOCR(uploadPreview.src);
+  } else {
+    setStatus('⚠️ No video or image available. Start camera or upload an image.', 'warning');
+  }
+});
+
+// ===== SCAN MODE TOGGLES =====
+document.querySelectorAll('[data-mode]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-mode]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentScanMode = btn.dataset.mode;
+    if (currentScanMode === 'camera') {
+      if (!stream) {
+        setStatus('📹 Click "Start Camera" to begin', 'info');
+      }
+    } else {
+      if (stream) stopCamera();
+      setStatus('📁 Upload an image to scan', 'info');
+      placeholder.style.display = 'block';
+      video.style.display = 'none';
+      scanFrame.style.display = 'none';
+      scanLine.style.display = 'none';
+    }
+  });
+});
+
+// ===== LOG ENTRY =====
+document.getElementById('btnLogEntry').addEventListener('click', () => {
+  const plate = fPlate.value.trim().toUpperCase();
+  if (!plate) {
+    setStatus('⚠️ Please enter a plate number', 'warning');
+    return;
+  }
+  
+  const entry = {
+    id: idCounter++,
+    plate: plate,
+    category: fCategory.value,
+    flat: fFlat.value || '—',
+    name: fName.value || '',
+    type: fType.value,
+    photo: capturedPhoto || PLACEHOLDER_IMG,
+    entryTime: Date.now(),
+    status: 'inside',
+    exitTime: null
+  };
+  
+  LOG.unshift(entry);
+  setStatus(`✅ Entry logged for ${plate}`, 'success');
+  setScanBadge('LOGGED', 'var(--green)');
+  document.getElementById('btnClear').click();
+  renderLog();
+  renderDashboard();
+});
+
+// ===== CLEAR =====
+document.getElementById('btnClear').addEventListener('click', () => {
+  hideResult();
+  capturedPhoto = null;
+  fPlate.value = '';
+  fFlat.value = '';
+  fName.value = '';
+  thumbRow.innerHTML = '';
+  setStatus('🧹 Cleared - ready for next scan', 'info');
+  setScanBadge('READY', 'var(--muted)');
+});
+
+// ===== RETRY SCAN =====
+document.getElementById('btnRetryScan').addEventListener('click', () => {
+  if (capturedPhoto) {
+    performOCR(capturedPhoto);
+  } else if (stream) {
+    btnCapture.click();
+  } else {
+    setStatus('⚠️ No image to retry. Capture or upload a new image.', 'warning');
+  }
+});
+
+// ===== RENDER LOG =====
+function renderLog() {
+  const search = document.getElementById('logSearch').value.toLowerCase();
+  const filter = document.querySelector('.filter-pill.active')?.dataset.filter || 'all';
+  const tbody = document.getElementById('logBody');
+  tbody.innerHTML = '';
+  
+  LOG
+    .filter(e => filter === 'all' || e.category === filter)
+    .filter(e => !search || 
+      e.plate.toLowerCase().includes(search) || 
+      (e.name || '').toLowerCase().includes(search) ||
+      (e.flat || '').toLowerCase().includes(search)
+    )
+    .forEach(e => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><img class="thumb" src="${e.photo}"></td>
+        <td class="plate-cell">${e.plate}</td>
+        <td><span class="badge-category ${e.category}">${e.category}</span></td>
+        <td>${e.flat}</td>
+        <td>${e.name || '—'}</td>
+        <td>${new Date(e.entryTime).toLocaleTimeString()}</td>
+        <td>${e.status === 'inside' ? '🟢 Inside' : '⚪ Exited'}</td>
+        <td>${e.status === 'inside' ? `<button class="mini-btn" onclick="markExit(${e.id})">Exit</button>` : ''}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+}
+
+window.markExit = function(id) {
+  const entry = LOG.find(e => e.id === id);
+  if (entry) {
+    entry.status = 'exited';
+    entry.exitTime = Date.now();
+    renderLog();
+    renderDashboard();
+  }
+};
+
+// ===== RENDER REGISTRY =====
+function renderRegistry() {
+  const search = document.getElementById('registrySearch').value.toLowerCase();
+  const grid = document.getElementById('registryGrid');
+  grid.innerHTML = '';
+  
+  REGISTRY
+    .filter(v => !search || 
+      v.plate.toLowerCase().includes(search) ||
+      v.owner.toLowerCase().includes(search) ||
+      v.flat.toLowerCase().includes(search)
+    )
+    .forEach(v => {
+      const card = document.createElement('div');
+      card.className = 'registry-card';
+      card.innerHTML = `
+        <div class="plate">${v.plate}</div>
+        <div class="owner">${v.owner}</div>
+        <div class="meta">
+          <span>${v.flat}</span>
+          <span>•</span>
+          <span>${v.type}</span>
+          <span>•</span>
+          <span style="color:${v.sticker ? 'var(--green)' : 'var(--red)'}">
+            ${v.sticker ? '✅ Sticker' : '❌ No Sticker'}
+          </span>
+        </div>
+      `;
+      grid.appendChild(card);
+    });
+}
+
+// ===== RENDER DASHBOARD =====
+function renderDashboard() {
+  const inside = LOG.filter(e => e.status === 'inside');
+  document.getElementById('statInside').textContent = inside.length;
+  document.getElementById('statToday').textContent = LOG.length;
+  document.getElementById('statRegistered').textContent = REGISTRY.length;
+  
+  const overstays = inside.filter(e => (Date.now() - e.entryTime) > 30 * 60000);
+  document.getElementById('statOverstay').textContent = overstays.length;
+  
+  const tbody = document.getElementById('insideBody');
+  tbody.innerHTML = '';
+  inside.forEach(e => {
+    const duration = Date.now() - e.entryTime;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><img class="thumb" src="${e.photo}"></td>
+      <td class="plate-cell">${e.plate}</td>
+      <td><span class="badge-category ${e.category}">${e.category}</span></td>
+      <td>${e.flat}</td>
+      <td>${new Date(e.entryTime).toLocaleTimeString()}</td>
+      <td>${Math.floor(duration / 60000)}m</td>
+      <td><button class="mini-btn" onclick="markExit(${e.id})">Exit</button></td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+// ===== FILTER PILLS =====
+document.querySelectorAll('.filter-pill').forEach(pill => {
+  pill.addEventListener('click', () => {
+    document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+    pill.classList.add('active');
+    renderLog();
+  });
+});
+
+// ===== SEARCH INPUTS =====
+document.getElementById('logSearch').addEventListener('input', renderLog);
+document.getElementById('registrySearch').addEventListener('input', renderRegistry);
+document.getElementById('clearRegistrySearch').addEventListener('click', () => {
+  document.getElementById('registrySearch').value = '';
+  renderRegistry();
+});
+
+// ===== NAVIGATION =====
+document.querySelectorAll('.nav-item').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('page-' + btn.dataset.page).classList.add('active');
+    if (btn.dataset.page === 'log') renderLog();
+    if (btn.dataset.page === 'dashboard') renderDashboard();
+    if (btn.dataset.page === 'registry') renderRegistry();
+  });
+});
+
+// ===== INIT =====
+renderLog();
+renderDashboard();
+renderRegistry();
+setStatus('🚀 GATEWATCH FREE ready! Click "Start Camera" to begin.', 'info');
+</script>
+</body>
+</html>
